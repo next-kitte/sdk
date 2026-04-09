@@ -49,24 +49,35 @@ export class Kitte<
   }
 
   action<TOutput>(fn: (data: Params<TSchema, TCtx>) => Promise<TOutput>) {
-    return async (input: z.infer<TSchema>): Promise<ActionResult<TOutput>> => {
+    return async (
+      ...args: TSchema extends ZodTypeAny
+        ? [input: z.infer<TSchema>]
+        : [input?: unknown]
+    ): Promise<ActionResult<TOutput>> => {
       try {
+        const input = args[0]
+
         const parsed = this._schema ? this._schema.parse(input) : input
 
         let ctx = {} as TCtx
+
         for (const middleware of this._middlewares) {
           const result = await middleware({
             input: parsed,
             ctx,
           } as Params<TSchema, TCtx>)
+
           ctx = { ...ctx, ...result.ctx } as TCtx
         }
 
-        const result = await fn({ input: parsed, ctx } as Params<TSchema, TCtx>)
+        const result = await fn({
+          input: parsed,
+          ctx,
+        } as Params<TSchema, TCtx>)
 
         return [parseObject(result), null]
       } catch (error) {
-        return [null, error as unknown as PossibleError]
+        return [null, error as PossibleError]
       }
     }
   }
