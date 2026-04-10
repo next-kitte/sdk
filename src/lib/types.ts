@@ -8,3 +8,5 @@ export type Params<Schema, TCtx = Record<string, unknown>> = {
 }
 
 export type ActionResult<T> = [T, null] | [null, PossibleError]
+
+export type Status = "idle" | "loading" | "success" | "error"

@@ -2,23 +2,24 @@ import type { ZodTypeAny, z } from "zod"
 import { parseObject } from "./helpers"
 import type { ActionResult, Params, PossibleError } from "./types"
 
+type InternalMiddleware = (data: {
+  input: unknown
+  ctx: Record<string, unknown>
+}) => Promise<{ ctx: Record<string, unknown> }>
+
 export class Kitte<
   TSchema extends ZodTypeAny | null = null,
   TCtx extends Record<string, unknown> = Record<string, unknown>,
 > {
-  private _middlewares: Array<
-    (data: Params<TSchema, TCtx>) => Promise<{ ctx: Partial<TCtx> }>
-  > = []
+  private _middlewares: InternalMiddleware[] = []
+  private _schema?: TSchema
 
-  constructor(private _schema?: TSchema) {}
-
-  schema<TNewSchema extends ZodTypeAny>(schema: TNewSchema) {
-    const client = new Kitte<TNewSchema, TCtx>(schema)
-    client._middlewares = this._middlewares as unknown as Kitte<
-      TNewSchema,
-      TCtx
-    >["_middlewares"]
-    return client
+  schema<TNewSchema extends ZodTypeAny>(
+    schema: TNewSchema,
+  ): Kitte<TNewSchema, TCtx> {
+    this._middlewares = [...this._middlewares]
+    this._schema = schema as unknown as TSchema
+    return this as unknown as Kitte<TNewSchema, TCtx>
   }
 
   middleware<TNewCtx extends Record<string, unknown>>(
@@ -40,19 +41,16 @@ export class Kitte<
 
   use<TNewCtx extends Record<string, unknown>>(
     fn: (data: Params<TSchema, TCtx>) => Promise<{ ctx: TNewCtx }>,
-  ): Kitte<TSchema, TCtx & TNewCtx> {
-    // biome-ignore lint/suspicious/noExplicitAny: middlewares can be a infinity of types
-    const newMiddlewares: any[] = [...this._middlewares, fn]
-    const client = new Kitte<TSchema, TCtx & TNewCtx>(this._schema)
-    client._middlewares = newMiddlewares
-    return client
+  ) {
+    this._middlewares.push(fn as InternalMiddleware)
+    return this
   }
 
-  action<TOutput>(fn: (data: Params<TSchema, TCtx>) => Promise<TOutput>) {
+  action<TOutput>(
+    fn: (data: Params<TSchema, TCtx>) => Promise<TOutput> | TOutput,
+  ) {
     return async (
-      ...args: TSchema extends ZodTypeAny
-        ? [input: z.infer<TSchema>]
-        : [input?: unknown]
+      ...args: TSchema extends ZodTypeAny ? [input: z.infer<TSchema>] : []
     ): Promise<ActionResult<TOutput>> => {
       try {
         const input = args[0]
@@ -65,7 +63,7 @@ export class Kitte<
           const result = await middleware({
             input: parsed,
             ctx,
-          } as Params<TSchema, TCtx>)
+          })
 
           ctx = { ...ctx, ...result.ctx } as TCtx
         }
