@@ -27,23 +27,21 @@ export class Kitte<
       input: Record<string, unknown>
       ctx: Record<string, unknown>
     }) => Promise<TNewCtx> | TNewCtx,
-  ) {
-    return async (data: {
-      input: Record<string, unknown>
-      ctx: Record<string, unknown>
-    }) => {
+  ): (data: {
+    input: Record<string, unknown>
+    ctx: Record<string, unknown>
+  }) => Promise<{ ctx: TNewCtx }> {
+    return async (data) => {
       const result = await fn(data)
-      return {
-        ctx: result,
-      }
+      return { ctx: result }
     }
   }
 
   use<TNewCtx extends Record<string, unknown>>(
     fn: (data: Params<TSchema, TCtx>) => Promise<{ ctx: TNewCtx }>,
-  ) {
+  ): Kitte<TSchema, TCtx & TNewCtx> {
     this._middlewares.push(fn as InternalMiddleware)
-    return this
+    return this as unknown as Kitte<TSchema, TCtx & TNewCtx>
   }
 
   action<TOutput>(

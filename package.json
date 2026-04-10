@@ -1,6 +1,6 @@
 {
   "name": "next-kitte",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "main": "dist/index.js",
   "devDependencies": {
     "@biomejs/biome": "2.4.8",
