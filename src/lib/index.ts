@@ -7,74 +7,100 @@ type InternalMiddleware = (data: {
   ctx: Record<string, unknown>
 }) => Promise<{ ctx: Record<string, unknown> }>
 
-export class Kitte<
+export type KitteBuilder<
   TSchema extends ZodTypeAny | null = null,
   TCtx extends Record<string, unknown> = Record<string, unknown>,
-> {
-  private _middlewares: InternalMiddleware[] = []
-  private _schema?: TSchema
-
+> = {
   schema<TNewSchema extends ZodTypeAny>(
     schema: TNewSchema,
-  ): Kitte<TNewSchema, TCtx> {
-    this._middlewares = [...this._middlewares]
-    this._schema = schema as unknown as TSchema
-    return this as unknown as Kitte<TNewSchema, TCtx>
-  }
-
+  ): KitteBuilder<TNewSchema, TCtx>
   middleware<TNewCtx extends Record<string, unknown>>(
-    fn: (data: {
-      input: Record<string, unknown>
-      ctx: Record<string, unknown>
-    }) => Promise<TNewCtx> | TNewCtx,
-  ): (data: {
-    input: Record<string, unknown>
-    ctx: Record<string, unknown>
-  }) => Promise<{ ctx: TNewCtx }> {
-    return async (data) => {
-      const result = await fn(data)
-      return { ctx: result }
-    }
-  }
-
+    fn: (data: Params<TSchema, TCtx>) => Promise<TNewCtx> | TNewCtx,
+  ): (data: Params<TSchema, TCtx>) => Promise<{ ctx: TNewCtx }>
   use<TNewCtx extends Record<string, unknown>>(
-    fn: (data: Params<TSchema, TCtx>) => Promise<{ ctx: TNewCtx }>,
-  ): Kitte<TSchema, TCtx & TNewCtx> {
-    this._middlewares.push(fn as InternalMiddleware)
-    return this as unknown as Kitte<TSchema, TCtx & TNewCtx>
-  }
-
+    fn: (
+      data: Params<TSchema, TCtx>,
+    ) => Promise<{ ctx: TNewCtx }> | { ctx: TNewCtx },
+  ): KitteBuilder<TSchema, TCtx & TNewCtx>
   action<TOutput>(
     fn: (data: Params<TSchema, TCtx>) => Promise<TOutput> | TOutput,
-  ) {
-    return async (
-      ...args: TSchema extends ZodTypeAny ? [input: z.infer<TSchema>] : []
-    ): Promise<ActionResult<TOutput>> => {
-      try {
-        const input = args[0]
+  ): (
+    ...args: TSchema extends ZodTypeAny ? [input: z.infer<TSchema>] : []
+  ) => Promise<ActionResult<TOutput>>
+}
 
-        const parsed = this._schema ? this._schema.parse(input) : input
+function makeKitte<
+  TSchema extends ZodTypeAny | null,
+  TCtx extends Record<string, unknown>,
+>(
+  middlewares: InternalMiddleware[],
+  schema: TSchema | undefined,
+): KitteBuilder<TSchema, TCtx> {
+  return {
+    schema<TNewSchema extends ZodTypeAny>(newSchema: TNewSchema) {
+      return makeKitte<TNewSchema, TCtx>([...middlewares], newSchema)
+    },
 
-        let ctx = {} as TCtx
+    middleware<TNewCtx extends Record<string, unknown>>(
+      fn: (data: Params<TSchema, TCtx>) => Promise<TNewCtx> | TNewCtx,
+    ): (data: Params<TSchema, TCtx>) => Promise<{ ctx: TNewCtx }> {
+      return async (data) => {
+        const result = await fn(data)
+        return { ctx: result }
+      }
+    },
 
-        for (const middleware of this._middlewares) {
-          const result = await middleware({
+    use<TNewCtx extends Record<string, unknown>>(
+      fn: (
+        data: Params<TSchema, TCtx>,
+      ) => Promise<{ ctx: TNewCtx }> | { ctx: TNewCtx },
+    ): KitteBuilder<TSchema, TCtx & TNewCtx> {
+      const wrapped: InternalMiddleware = async (data) => {
+        const result = await fn(data as Params<TSchema, TCtx>)
+        return { ctx: result.ctx as Record<string, unknown> }
+      }
+      return makeKitte<TSchema, TCtx & TNewCtx>(
+        [...middlewares, wrapped],
+        schema,
+      ) as KitteBuilder<TSchema, TCtx & TNewCtx>
+    },
+
+    action<TOutput>(
+      fn: (data: Params<TSchema, TCtx>) => Promise<TOutput> | TOutput,
+    ) {
+      return async (
+        ...args: TSchema extends ZodTypeAny ? [input: z.infer<TSchema>] : []
+      ): Promise<ActionResult<TOutput>> => {
+        try {
+          const input = args[0]
+
+          const parsed = schema ? schema.parse(input) : input
+
+          let ctx = {} as TCtx
+
+          for (const middleware of middlewares) {
+            const result = await middleware({
+              input: parsed,
+              ctx,
+            })
+
+            ctx = { ...ctx, ...result.ctx } as TCtx
+          }
+
+          const result = await fn({
             input: parsed,
             ctx,
-          })
+          } as Params<TSchema, TCtx>)
 
-          ctx = { ...ctx, ...result.ctx } as TCtx
+          return [parseObject(result), null]
+        } catch (error) {
+          return [null, error as PossibleError]
         }
-
-        const result = await fn({
-          input: parsed,
-          ctx,
-        } as Params<TSchema, TCtx>)
-
-        return [parseObject(result), null]
-      } catch (error) {
-        return [null, error as PossibleError]
       }
-    }
+    },
   }
+}
+
+export function createKitte(): KitteBuilder<null, Record<string, unknown>> {
+  return makeKitte<null, Record<string, unknown>>([], undefined)
 }
