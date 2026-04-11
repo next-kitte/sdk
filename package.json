@@ -5,7 +5,8 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.8",
     "@types/node": "25.5.0",
-    "@types/react": "19.2.14"
+    "@types/react": "19.2.14",
+    "husky": "^9.1.7"
   },
   "exports": {
     ".": {
@@ -21,7 +22,8 @@
     "build": "tsup src/index.ts --format esm,cjs --dts",
     "prepublishOnly": "npm run build",
     "biome": "biome check",
-    "typecheck": "tsc --project tsconfig.json --noEmit"
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "prepare": "husky"
   },
   "type": "module",
   "types": "dist/index.d.ts",
