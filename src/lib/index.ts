@@ -1,3 +1,4 @@
+import { parseObject } from "./helpers"
 import type * as T from "./types"
 
 function makePipelineBuilder<
@@ -102,7 +103,7 @@ function makePipelineBuilder<
             await cb(output as TOutput)
           }
 
-          return [output as TActionOutput, null]
+          return [parseObject(output) as TActionOutput, null]
         } catch (error) {
           const err = error instanceof Error ? error : new Error(String(error))
 
