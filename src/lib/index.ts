@@ -113,11 +113,9 @@ function makePipelineBuilder<
             for (const cb of frozen.onErrorCallbacks) {
               await cb(err)
             }
-            // Swallow after handlers have run so callers get the error tuple.
-            return [null, err]
           }
 
-          throw err
+          return [null, err]
         }
       }
     },
