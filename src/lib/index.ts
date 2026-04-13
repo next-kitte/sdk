@@ -1,106 +1,194 @@
-import type { ZodTypeAny, z } from "zod"
-import { parseObject } from "./helpers"
-import type { ActionResult, Params, PossibleError } from "./types"
+import type * as T from "./types"
 
-type InternalMiddleware = (data: {
-  input: unknown
-  ctx: Record<string, unknown>
-}) => Promise<{ ctx: Record<string, unknown> }>
-
-export type KitteBuilder<
-  TSchema extends ZodTypeAny | null = null,
-  TCtx extends Record<string, unknown> = Record<string, unknown>,
-> = {
-  schema<TNewSchema extends ZodTypeAny>(
-    schema: TNewSchema,
-  ): KitteBuilder<TNewSchema, TCtx>
-  middleware<TNewCtx extends Record<string, unknown>>(
-    fn: (data: Params<TSchema, TCtx>) => Promise<TNewCtx> | TNewCtx,
-  ): (data: Params<TSchema, TCtx>) => Promise<{ ctx: TNewCtx }>
-  use<TNewCtx extends Record<string, unknown>>(
-    fn: (
-      data: Params<TSchema, TCtx>,
-    ) => Promise<{ ctx: TNewCtx }> | { ctx: TNewCtx },
-  ): KitteBuilder<TSchema, TCtx & TNewCtx>
-  action<TOutput>(
-    fn: (data: Params<TSchema, TCtx>) => Promise<TOutput> | TOutput,
-  ): (
-    ...args: TSchema extends ZodTypeAny ? [input: z.infer<TSchema>] : []
-  ) => Promise<ActionResult<TOutput>>
-}
-
-function makeKitte<
-  TSchema extends ZodTypeAny | null,
-  TCtx extends Record<string, unknown>,
+function makePipelineBuilder<
+  TInput,
+  TOutput,
+  TMiddlewares extends Record<string, unknown>[],
 >(
-  middlewares: InternalMiddleware[],
-  schema: TSchema | undefined,
-): KitteBuilder<TSchema, TCtx> {
+  state: T.BuilderState<TInput, TOutput>,
+): T.PipelineBuilder<TInput, TOutput, TMiddlewares> {
   return {
-    schema<TNewSchema extends ZodTypeAny>(newSchema: TNewSchema) {
-      return makeKitte<TNewSchema, TCtx>([...middlewares], newSchema)
+    input<TNewInput>(schema: T.Schema<TNewInput>) {
+      return makePipelineBuilder<TNewInput, TOutput, TMiddlewares>({
+        ...(state as unknown as T.BuilderState<TNewInput, TOutput>),
+        inputSchema: schema,
+      })
     },
 
-    middleware<TNewCtx extends Record<string, unknown>>(
-      fn: (data: Params<TSchema, TCtx>) => Promise<TNewCtx> | TNewCtx,
-    ): (data: Params<TSchema, TCtx>) => Promise<{ ctx: TNewCtx }> {
-      return async (data) => {
-        const result = await fn(data)
-        return { ctx: result }
-      }
+    output<TNewOutput>(schema: T.Schema<TNewOutput>) {
+      return makePipelineBuilder<TInput, TNewOutput, TMiddlewares>({
+        ...(state as unknown as T.BuilderState<TInput, TNewOutput>),
+        outputSchema: schema,
+      })
     },
 
-    use<TNewCtx extends Record<string, unknown>>(
-      fn: (
-        data: Params<TSchema, TCtx>,
-      ) => Promise<{ ctx: TNewCtx }> | { ctx: TNewCtx },
-    ): KitteBuilder<TSchema, TCtx & TNewCtx> {
-      const wrapped: InternalMiddleware = async (data) => {
-        const result = await fn(data as Params<TSchema, TCtx>)
-        return { ctx: result.ctx as Record<string, unknown> }
-      }
-      return makeKitte<TSchema, TCtx & TNewCtx>(
-        [...middlewares, wrapped],
-        schema,
-      ) as KitteBuilder<TSchema, TCtx & TNewCtx>
-    },
-
-    action<TOutput>(
-      fn: (data: Params<TSchema, TCtx>) => Promise<TOutput> | TOutput,
+    use<TNewContext extends Record<string, unknown>>(
+      middleware: T.Middleware<TNewContext>,
     ) {
+      return makePipelineBuilder<
+        TInput,
+        TOutput,
+        [...TMiddlewares, TNewContext]
+      >({
+        ...state,
+        middlewares: [
+          ...state.middlewares,
+          middleware as T.Middleware<Record<string, unknown>>,
+        ],
+      } as T.BuilderState<TInput, TOutput>)
+    },
+
+    onSuccess(cb) {
+      return makePipelineBuilder<TInput, TOutput, TMiddlewares>({
+        ...state,
+        onSuccessCallbacks: [...state.onSuccessCallbacks, cb],
+      })
+    },
+
+    onError(cb) {
+      return makePipelineBuilder<TInput, TOutput, TMiddlewares>({
+        ...state,
+        onErrorCallbacks: [...state.onErrorCallbacks, cb],
+      })
+    },
+
+    onStart(cb) {
+      return makePipelineBuilder<TInput, TOutput, TMiddlewares>({
+        ...state,
+        onStartCallbacks: [...state.onStartCallbacks, cb],
+      })
+    },
+
+    action<TActionOutput>(
+      fn: (args: {
+        input: TInput
+        ctx: T.MergeObjects<TMiddlewares>
+      }) => T.MaybePromise<TActionOutput>,
+    ): T.ServerAction<TInput, TActionOutput> {
+      // Snapshot state at the moment .action() is called.
+      // All callbacks must be registered before .action().
+      const frozen = state
+
       return async (
-        ...args: TSchema extends ZodTypeAny ? [input: z.infer<TSchema>] : []
-      ): Promise<ActionResult<TOutput>> => {
+        rawInput?: TInput,
+      ): Promise<[TActionOutput, null] | [null, Error]> => {
+        for (const cb of frozen.onStartCallbacks) {
+          await cb()
+        }
+
         try {
-          const input = args[0]
+          const input: TInput = frozen.inputSchema
+            ? frozen.inputSchema.parse(rawInput)
+            : (rawInput as TInput)
 
-          const parsed = schema ? schema.parse(input) : input
-
-          let ctx = {} as TCtx
-
-          for (const middleware of middlewares) {
-            const result = await middleware({
-              input: parsed,
-              ctx,
-            })
-
-            ctx = { ...ctx, ...result.ctx } as TCtx
+          const ctx: Record<string, unknown> = {}
+          for (const mw of frozen.middlewares) {
+            const result = await mw.execute()
+            Object.assign(ctx, result)
           }
 
-          const result = await fn({
-            input: parsed,
-            ctx,
-          } as Params<TSchema, TCtx>)
+          const rawOutput = await (
+            fn as (args: {
+              input: TInput
+              ctx: Record<string, unknown>
+            }) => T.MaybePromise<TActionOutput>
+          )({ input, ctx })
 
-          return [parseObject(result), null]
+          const output = frozen.outputSchema
+            ? frozen.outputSchema.parse(rawOutput)
+            : rawOutput
+
+          for (const cb of frozen.onSuccessCallbacks) {
+            await cb(output as TOutput)
+          }
+
+          return [output as TActionOutput, null]
         } catch (error) {
-          return [null, error as PossibleError]
+          const err = error instanceof Error ? error : new Error(String(error))
+
+          // Run onError callbacks, but do NOT re-throw —
+          // let the caller decide what to do with the error.
+          // If no onError handler is registered the error surfaces normally.
+          if (frozen.onErrorCallbacks.length > 0) {
+            for (const cb of frozen.onErrorCallbacks) {
+              await cb(err)
+            }
+            // Swallow after handlers have run so callers get the error tuple.
+            return [null, err]
+          }
+
+          throw err
         }
       }
     },
   }
 }
 
-export function createKitte(): KitteBuilder<null, Record<string, unknown>> {
-  return makeKitte<null, Record<string, unknown>>([], undefined)
+// ─── Middleware factory ───────────────────────────────────────────────────────
+export function createMiddleware<TContext extends Record<string, unknown>>(
+  fn: T.MiddlewareFn<TContext>,
+): T.Middleware<TContext> {
+  return {
+    _contextType: undefined as unknown as TContext,
+    execute: fn,
+  }
+}
+
+// ─── Entry point ─────────────────────────────────────────────────────────────
+
+function makeInitialState(): T.BuilderState<undefined, unknown> {
+  return {
+    inputSchema: null,
+    outputSchema: null,
+    middlewares: [],
+    onSuccessCallbacks: [],
+    onErrorCallbacks: [],
+    onStartCallbacks: [],
+  }
+}
+
+export type KitteClient = {
+  middleware: <TContext extends Record<string, unknown>>(
+    fn: T.MiddlewareFn<TContext>,
+  ) => T.Middleware<TContext>
+  input: <TInput>(
+    schema: T.Schema<TInput>,
+  ) => T.PipelineBuilder<TInput, unknown, []>
+  output: <TOutput>(
+    schema: T.Schema<TOutput>,
+  ) => T.PipelineBuilder<undefined, TOutput, []>
+  use: <TContext extends Record<string, unknown>>(
+    middleware: T.Middleware<TContext>,
+  ) => T.PipelineBuilder<undefined, unknown, [TContext]>
+  onSuccess: (
+    cb: (data: unknown) => T.MaybePromise<void>,
+  ) => T.PipelineBuilder<undefined, unknown, []>
+  onError: (
+    cb: (error: unknown) => T.MaybePromise<void>,
+  ) => T.PipelineBuilder<undefined, unknown, []>
+  onStart: (
+    cb: () => T.MaybePromise<void>,
+  ) => T.PipelineBuilder<undefined, unknown, []>
+  action: <TActionOutput>(
+    fn: (args: {
+      input: undefined
+      ctx: Record<string, unknown>
+    }) => T.MaybePromise<TActionOutput>,
+  ) => T.ServerAction<undefined, TActionOutput>
+}
+
+export function createKitte(): KitteClient {
+  const base = () =>
+    makePipelineBuilder<undefined, unknown, []>(makeInitialState())
+
+  return {
+    middleware: createMiddleware,
+    input: (schema) => base().input(schema),
+    output: (schema) => base().output(schema),
+    use: (middleware) => base().use(middleware),
+    onSuccess: (cb) => base().onSuccess(cb),
+    onError: (cb) => base().onError(cb),
+    onStart: (cb) => base().onStart(cb),
+    action: (fn) => base().action(fn),
+  }
 }

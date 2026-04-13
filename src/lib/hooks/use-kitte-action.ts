@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react"
 import type * as T from "../types"
+import type { UseKitteActionResult } from "./types"
 
 export function useKitteAction<
   const TArgs extends readonly unknown[] = [],
@@ -12,23 +13,34 @@ export function useKitteAction<
     onSuccess?: (data: TOutput) => void
     onError?: (error: T.PossibleError) => void
   },
-) {
-  const [data, setData] = useState<TOutput | null>(null)
-  const [status, setStatus] = useState<T.Status>("idle")
-  const [error, setError] = useState<unknown | null>(null)
+): UseKitteActionResult<TArgs, TOutput> {
+  const [state, setState] = useState<T.UseKitteActionState<TOutput>>({
+    status: "idle",
+    data: null,
+    error: null,
+  })
 
   const execute = useCallback(
     async (...args: TArgs) => {
-      setStatus("loading")
+      setState((prev) => ({
+        status: "loading",
+        data: prev.status === "idle" ? null : prev.data,
+        error: null,
+      }))
       const [_res, _err] = await action(...args)
       if (_err) {
-        setError(_err)
-        setStatus("error")
+        setState((prev) => ({
+          status: "error",
+          data: prev.data,
+          error: _err,
+        }))
         if (options?.onError) options.onError(_err)
-      }
-      if (_res) {
-        setData(_res)
-        setStatus("success")
+      } else {
+        setState({
+          status: "success",
+          data: _res,
+          error: null,
+        })
         if (options?.onSuccess) options.onSuccess(_res)
       }
       return [_res, _err] as T.ActionResult<TOutput>
@@ -37,9 +49,7 @@ export function useKitteAction<
   )
 
   return {
-    data,
-    status,
-    error,
+    ...state,
     execute,
   }
 }
