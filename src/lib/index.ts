@@ -60,19 +60,19 @@ function makePipelineBuilder<
       })
     },
 
-    action<TActionOutput>(
+    action: ((
       fn: (args: {
         input: TInput
         ctx: T.MergeObjects<TMiddlewares>
-      }) => T.MaybePromise<TActionOutput>,
-    ): T.ServerAction<TInput, TActionOutput> {
+      }) => T.MaybePromise<unknown>,
+    ) => {
       // Snapshot state at the moment .action() is called.
       // All callbacks must be registered before .action().
       const frozen = state
 
       return async (
         rawInput?: TInput,
-      ): Promise<[TActionOutput, null] | [null, Error]> => {
+      ): Promise<[unknown, null] | [null, Error]> => {
         for (const cb of frozen.onStartCallbacks) {
           await cb()
         }
@@ -92,7 +92,7 @@ function makePipelineBuilder<
             fn as (args: {
               input: TInput
               ctx: Record<string, unknown>
-            }) => T.MaybePromise<TActionOutput>
+            }) => T.MaybePromise<unknown>
           )({ input, ctx })
 
           const output = frozen.outputSchema
@@ -100,10 +100,10 @@ function makePipelineBuilder<
             : rawOutput
 
           for (const cb of frozen.onSuccessCallbacks) {
-            await cb(output as TOutput)
+            await cb(output as T.PipelineSuccessData<TOutput>)
           }
 
-          return [parseObject(output) as TActionOutput, null]
+          return [parseObject(output), null]
         } catch (error) {
           const err = error instanceof Error ? error : new Error(String(error))
 
@@ -119,7 +119,7 @@ function makePipelineBuilder<
           return [null, err]
         }
       }
-    },
+    }) as T.PipelineBuilder<TInput, TOutput, TMiddlewares>["action"],
   }
 }
 
@@ -135,7 +135,7 @@ export function createMiddleware<TContext extends Record<string, unknown>>(
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
-function makeInitialState(): T.BuilderState<undefined, unknown> {
+function makeInitialState(): T.BuilderState<undefined, T.InferActionOutput> {
   return {
     inputSchema: null,
     outputSchema: null,
@@ -152,33 +152,33 @@ export type KitteClient = {
   ) => T.Middleware<TContext>
   input: <TInput>(
     schema: T.Schema<TInput>,
-  ) => T.PipelineBuilder<TInput, unknown, []>
+  ) => T.PipelineBuilder<TInput, T.InferActionOutput, []>
   output: <TOutput>(
     schema: T.Schema<TOutput>,
   ) => T.PipelineBuilder<undefined, TOutput, []>
   use: <TContext extends Record<string, unknown>>(
     middleware: T.Middleware<TContext>,
-  ) => T.PipelineBuilder<undefined, unknown, [TContext]>
+  ) => T.PipelineBuilder<undefined, T.InferActionOutput, [TContext]>
   onSuccess: (
     cb: (data: unknown) => T.MaybePromise<void>,
-  ) => T.PipelineBuilder<undefined, unknown, []>
+  ) => T.PipelineBuilder<undefined, T.InferActionOutput, []>
   onError: (
     cb: (error: unknown) => T.MaybePromise<void>,
-  ) => T.PipelineBuilder<undefined, unknown, []>
+  ) => T.PipelineBuilder<undefined, T.InferActionOutput, []>
   onStart: (
     cb: () => T.MaybePromise<void>,
-  ) => T.PipelineBuilder<undefined, unknown, []>
-  action: <TActionOutput>(
+  ) => T.PipelineBuilder<undefined, T.InferActionOutput, []>
+  action: <TInferred>(
     fn: (args: {
       input: undefined
       ctx: Record<string, unknown>
-    }) => T.MaybePromise<TActionOutput>,
-  ) => T.ServerAction<undefined, TActionOutput>
+    }) => T.MaybePromise<TInferred>,
+  ) => T.ServerAction<undefined, TInferred>
 }
 
 export function createKitte(): KitteClient {
   const base = () =>
-    makePipelineBuilder<undefined, unknown, []>(makeInitialState())
+    makePipelineBuilder<undefined, T.InferActionOutput, []>(makeInitialState())
 
   return {
     middleware: createMiddleware,

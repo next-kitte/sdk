@@ -17,6 +17,14 @@ export type Schema<TOutput> = {
   parse(data: unknown): TOutput
 }
 
+/** Pipeline has no `.output()` — `.action()` return type is inferred from the handler. */
+declare const inferActionOutput: unique symbol
+export type InferActionOutput = typeof inferActionOutput
+
+export type PipelineSuccessData<TOutput> = [TOutput] extends [InferActionOutput]
+  ? unknown
+  : TOutput
+
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
 export type MiddlewareFn<TContext extends Record<string, unknown>> =
@@ -40,7 +48,9 @@ export type BuilderState<TInput, TOutput> = {
   inputSchema: Schema<TInput> | null
   outputSchema: Schema<TOutput> | null
   middlewares: Middleware<Record<string, unknown>>[]
-  onSuccessCallbacks: Array<(data: TOutput) => MaybePromise<void>>
+  onSuccessCallbacks: Array<
+    (data: PipelineSuccessData<TOutput>) => MaybePromise<void>
+  >
   onErrorCallbacks: Array<(error: unknown) => MaybePromise<void>>
   onStartCallbacks: Array<() => MaybePromise<void>>
 }
@@ -66,7 +76,7 @@ export type PipelineBuilder<
     middleware: Middleware<TNewContext>,
   ) => PipelineBuilder<TInput, TOutput, [...TMiddlewares, TNewContext]>
   onSuccess: (
-    cb: (data: TOutput) => MaybePromise<void>,
+    cb: (data: PipelineSuccessData<TOutput>) => MaybePromise<void>,
   ) => PipelineBuilder<TInput, TOutput, TMiddlewares>
   onError: (
     cb: (error: unknown) => MaybePromise<void>,
@@ -74,15 +84,22 @@ export type PipelineBuilder<
   onStart: (
     cb: () => MaybePromise<void>,
   ) => PipelineBuilder<TInput, TOutput, TMiddlewares>
-  action: <TActionOutput>(
-    fn: (args: {
-      input: TInput
-      ctx: MergeObjects<TMiddlewares>
-    }) => MaybePromise<TActionOutput>,
-  ) => ServerAction<TInput, TActionOutput>
+  action: [TOutput] extends [InferActionOutput]
+    ? <TInferred>(
+        fn: (args: {
+          input: TInput
+          ctx: MergeObjects<TMiddlewares>
+        }) => MaybePromise<TInferred>,
+      ) => ServerAction<TInput, TInferred>
+    : (
+        fn: (args: {
+          input: TInput
+          ctx: MergeObjects<TMiddlewares>
+        }) => MaybePromise<TOutput>,
+      ) => ServerAction<TInput, TOutput>
 }
 
 // ─── Result type ───────────────────────────────────────────────────────────────
 export type KitteResult<
   TAction extends (...args: never[]) => Promise<readonly [unknown, unknown]>,
-> = Awaited<ReturnType<TAction>>[0]
+> = NonNullable<Awaited<ReturnType<TAction>>[0]>
