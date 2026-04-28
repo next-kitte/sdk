@@ -5,4 +5,5 @@ export type UseKitteActionResult<
   TOutput,
 > = T.UseKitteActionState<TOutput> & {
   execute: (...args: TArgs) => Promise<T.ActionResult<TOutput>>
+  reset: () => void
 }

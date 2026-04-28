@@ -4,6 +4,12 @@ import { useCallback, useState } from "react"
 import type * as T from "../types"
 import type { UseKitteActionResult } from "./types"
 
+const INITIAL_DATA = {
+  status: "idle",
+  data: null,
+  error: null,
+} as const
+
 export function useKitteAction<
   const TArgs extends readonly unknown[] = [],
   TOutput = unknown,
@@ -14,11 +20,8 @@ export function useKitteAction<
     onError?: (error: T.PossibleError) => void
   },
 ): UseKitteActionResult<TArgs, TOutput> {
-  const [state, setState] = useState<T.UseKitteActionState<TOutput>>({
-    status: "idle",
-    data: null,
-    error: null,
-  })
+  const [state, setState] =
+    useState<T.UseKitteActionState<TOutput>>(INITIAL_DATA)
 
   const execute = useCallback(
     async (...args: TArgs) => {
@@ -48,8 +51,13 @@ export function useKitteAction<
     [action, options],
   )
 
+  const reset = useCallback(() => {
+    setState(INITIAL_DATA)
+  }, [])
+
   return {
     ...state,
+    reset,
     execute,
   }
 }
