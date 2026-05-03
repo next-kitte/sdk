@@ -2,11 +2,17 @@ import { createKitte } from "../src"
 
 const client = createKitte()
 
-const middleware = client.middleware(() => {
-  return {
-    message: "Hello world",
-  }
-})
+const connectDatabase = () => {}
+
+const middleware = client
+  .onStart(async () => {
+    await connectDatabase()
+  })
+  .middleware(() => {
+    return {
+      message: "Hello world",
+    }
+  })
 
 const actionWithMiddleware = client.use(middleware).action(({ ctx }) => {
   return {

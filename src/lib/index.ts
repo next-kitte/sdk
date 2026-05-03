@@ -60,6 +60,31 @@ function makePipelineBuilder<
       })
     },
 
+    middleware: ((
+      fn: (args: {
+        ctx: T.MergeObjects<TMiddlewares>
+      }) => T.MaybePromise<unknown>,
+    ) => {
+      const frozen = state
+
+      return {
+        _contextType: undefined as unknown,
+        execute: async () => {
+          for (const cb of frozen.onStartCallbacks) {
+            await cb()
+          }
+
+          const ctx: Record<string, unknown> = {}
+          for (const mw of frozen.middlewares) {
+            const result = await mw.execute()
+            Object.assign(ctx, result)
+          }
+
+          return fn({ ctx: ctx as T.MergeObjects<TMiddlewares> })
+        },
+      }
+    }) as T.PipelineBuilder<TInput, TOutput, TMiddlewares>["middleware"],
+
     action: ((
       fn: (args: {
         input: TInput

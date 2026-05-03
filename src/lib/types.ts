@@ -84,6 +84,9 @@ export type PipelineBuilder<
   onStart: (
     cb: () => MaybePromise<void>,
   ) => PipelineBuilder<TInput, TOutput, TMiddlewares>
+  middleware: <TContext extends Record<string, unknown>>(
+    fn: (args: { ctx: MergeObjects<TMiddlewares> }) => MaybePromise<TContext>,
+  ) => Middleware<TContext>
   action: [TOutput] extends [InferActionOutput]
     ? <TInferred>(
         fn: (args: {
